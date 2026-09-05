@@ -1,4 +1,4 @@
-const state={user:null,page:"home",dashboard:null,adminTab:"overview",scanning:false,scanStream:null,canteenPoll:null};
+const state={user:null,page:"home",dashboard:null,adminTab:"overview",scanning:false,scanStream:null,canteenPoll:null,qrScanning:false,qrScanStream:null};
 
 const icons={home:"⌂",diary:"📅",grades:"★",homework:"✓",coin:"◉",shop:"🛍",canteen:"🍽",challenge:"🏆",leader:"🥇",events:"📅",ai:"✦",profile:"◉",admin:"▦",scan:"📷",report:"📊"};
 
@@ -132,10 +132,39 @@ async function progressChallenge(id){try{await api(`/challenges/${id}/progress`,
 
 async function renderLeader(){const rows=await api("/leaderboard");setApp(`<div class="welcome"><div><h1>Leaderboard 🥇</h1><p class="muted">X Coin bo‘yicha eng faol o‘quvchilar.</p></div></div><div class="card" style="margin-top:20px">${rows.length?`<table><thead><tr><th>#</th><th>O‘quvchi</th><th>Sinf</th><th>X Coin</th></tr></thead><tbody>${rows.map((u,i)=>`<tr><td><b>${i+1}</b></td><td><div class="rowflex"><div class="avatar">${esc(u.name[0])}</div><b>${esc(u.name)}</b></div></td><td>${esc(u.class||"—")}</td><td>🪙 ${money(u.balance)}</td></tr>`).join("")}</tbody></table>`:'<p class="muted">Hali o‘quvchi yo‘q</p>'}</div>`)}
 
-async function renderEvents(){const es=await api("/events");setApp(`<div class="welcome"><div><h1>Tadbirlar</h1><p class="muted">Maktab tadbirlari va QR orqali qatnashuv.</p></div>${["ADMIN","SUPER_ADMIN"].includes(state.user.role)?'<button class="primary" onclick="eventModal()">+ Tadbir qo‘shish</button>':""}</div><div class="grid3" style="margin-top:20px">${es.length?es.map(e=>`<div class="card"><div class="iconbox">📅</div><h3 style="margin-top:14px">${esc(e.title)}</h3><p class="muted">${esc(e.description||"")}</p><p>📍 ${esc(e.location||"Maktab")}</p><p>🗓 ${esc(e.date||"")}</p>${state.user.role==="STUDENT"?`<button class="primary" onclick="checkin('${e.id}')">QR orqali qatnashish</button>`:""}</div>`).join(""):'<p class="muted">Hozircha tadbir yo‘q</p>'}</div>`)}
+async function renderEvents(){const es=await api("/events");const staff=["TEACHER","ADMIN","SUPER_ADMIN"].includes(state.user.role);setApp(`<div class="welcome"><div><h1>Tadbirlar</h1><p class="muted">Maktab tadbirlari va QR orqali qatnashuv.</p></div>${["ADMIN","SUPER_ADMIN"].includes(state.user.role)?'<button class="primary" onclick="eventModal()">+ Tadbir qo‘shish</button>':""}</div><div class="grid3" style="margin-top:20px">${es.length?es.map(e=>`<div class="card"><div class="iconbox">📅</div><h3 style="margin-top:14px">${esc(e.title)}</h3><p class="muted">${esc(e.description||"")}</p><p>📍 ${esc(e.location||"Maktab")}</p><p>🗓 ${esc(e.date||"")}</p>${state.user.role==="STUDENT"?`<button class="primary" onclick="checkin('${e.id}')">QR orqali qatnashish</button>`:""}${staff?`<button class="secondary" onclick="openQrScanner('Tadbirga qatnashuv',t=>checkinScan('${e.id}',t))">📷 QR skaner</button>`:""}</div>`).join(""):'<p class="muted">Hozircha tadbir yo‘q</p>'}</div>`)}
 function eventModal(){document.body.insertAdjacentHTML("beforeend",`<div class="modal-back" id="modal"><div class="modal"><div class="modal-head"><h2>Tadbir qo‘shish</h2><button class="ghost" onclick="modal.remove()">✕</button></div><div class="field"><label>Sarlavha</label><input id="evt"></div><div class="field"><label>Tavsif</label><input id="evd"></div><div class="grid2"><div class="field"><label>Sana</label><input id="evdt" type="date"></div><div class="field"><label>Manzil</label><input id="evl" value="Maktab"></div></div><button class="primary" onclick="addEvent()">Saqlash</button></div></div>`)}
 async function addEvent(){try{await api("/events",{method:"POST",body:JSON.stringify({title:evt.value,description:evd.value,date:evdt.value,location:evl.value})});modal.remove();render();toast("Tadbir qo‘shildi")}catch(e){toast(e.message)}}
 async function checkin(id){try{await api(`/events/${id}/checkin`,{method:"POST"});toast("Tadbirga qatnashuv qayd etildi")}catch(e){toast(e.message)}}
+async function checkinScan(eventId,token){try{const r=await api(`/events/${eventId}/checkin-scan`,{method:"POST",body:JSON.stringify({token})});toast(`${r.studentName} qatnashuvi qayd etildi ✅`)}catch(e){toast(e.message)}}
+
+// ---------- Generic QR scanner (events check-in, etc.) ----------
+function openQrScanner(title,onDecode){
+ document.body.insertAdjacentHTML("beforeend",`<div class="modal-back" id="qrScanModal"><div class="modal" style="max-width:380px;text-align:center"><div class="modal-head"><h2>${esc(title)}</h2><button class="ghost" onclick="closeQrScanner()">✕</button></div><video id="qrScanVideo" playsinline muted style="width:100%;border-radius:16px;background:#000;max-height:280px;object-fit:cover"></video><canvas id="qrScanCanvas" style="display:none"></canvas><p class="muted" id="qrScanHint" style="margin-top:10px">Kamera ishga tushmoqda...</p></div></div>`);
+ ensureJsQR(()=>{
+  navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}}).then(stream=>{
+   state.qrScanStream=stream;state.qrScanning=true;
+   const v=document.getElementById("qrScanVideo");if(!v)return;
+   v.srcObject=stream;v.play();
+   const hint=document.getElementById("qrScanHint");if(hint)hint.textContent="QR kodni ko‘rsating";
+   const tick=()=>{
+    if(!state.qrScanning)return;
+    const video=document.getElementById("qrScanVideo");
+    if(video&&video.readyState===video.HAVE_ENOUGH_DATA&&video.videoWidth){
+     const canvas=document.getElementById("qrScanCanvas");
+     canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+     const ctx=canvas.getContext("2d");ctx.drawImage(video,0,0,canvas.width,canvas.height);
+     const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
+     const code=window.jsQR(imgData.data,imgData.width,imgData.height,{inversionAttempts:"dontInvert"});
+     if(code&&code.data){closeQrScanner();onDecode(code.data);return;}
+    }
+    requestAnimationFrame(tick);
+   };
+   requestAnimationFrame(tick);
+  }).catch(()=>{const hint=document.getElementById("qrScanHint");if(hint)hint.textContent="Kameraga ruxsat berilmadi";});
+ });
+}
+function closeQrScanner(){state.qrScanning=false;if(state.qrScanStream){state.qrScanStream.getTracks().forEach(t=>t.stop());state.qrScanStream=null;}document.getElementById("qrScanModal")?.remove();}
 
 async function renderAI(){setApp(`<div class="welcome"><div><h1>MAKTAB X AI 🤖</h1><p class="muted">Darslarni tushunish, savollar va mashqlar uchun yordamchi.</p></div></div><div class="card" style="max-width:900px;margin-top:20px"><div id="chat" class="list" style="min-height:300px"><div class="list-item"><div class="rowflex"><div class="iconbox">✦</div><div><b>X AI</b><div class="muted">Salom! Qaysi mavzuni tushuntirib beray?</div></div></div></div></div><form id="aiform" style="display:flex;gap:10px;margin-top:16px"><input id="aimsg" class="field" style="margin:0;flex:1;padding:14px" placeholder="Savolingizni yozing..."><button class="primary">Yuborish</button></form></div>`);aiform.onsubmit=async e=>{e.preventDefault();const m=aimsg.value.trim();if(!m)return;chat.insertAdjacentHTML("beforeend",`<div class="list-item"><b>Siz:</b> ${esc(m)}</div>`);aimsg.value="";try{const j=await api("/ai/chat",{method:"POST",body:JSON.stringify({message:m})});chat.insertAdjacentHTML("beforeend",`<div class="list-item"><div class="rowflex"><div class="iconbox">✦</div><div><b>X AI</b><div>${esc(j.answer)}</div></div></div></div>`)}catch(e){toast(e.message)}}}
 
@@ -147,7 +176,10 @@ async function submitHomework(id){try{await api(`/homework/${id}/submit`,{method
 async function renderCoins(){const c=await api("/coins");setApp(`<div class="welcome"><div><h1>X Coin 🪙</h1><p class="muted">Topgan va sarflagan X Coinlaringiz tarixi.</p></div><span class="coin-pill">🪙 ${money(c.balance)}</span></div><div class="card" style="margin-top:20px">${c.transactions.length?`<table><thead><tr><th>Sana</th><th>Sabab</th><th>Turi</th><th>Miqdor</th></tr></thead><tbody>${c.transactions.map(x=>`<tr><td>${new Date(x.createdAt).toLocaleString("uz-UZ")}</td><td>${esc(x.reason)}</td><td>${esc(x.type)}</td><td class="${x.amount>0?'green-text':''}">${x.amount>0?"+":""}${money(x.amount)}</td></tr>`).join("")}</tbody></table>`:'<p class="muted">Hali tranzaksiya yo‘q</p>'}</div>`)}
 
 // ---------- Profile ----------
-function renderProfile(){setApp(`<div class="welcome"><div><h1>Profil</h1><p class="muted">Shaxsiy hisob ma’lumotlari.</p></div></div><div class="card" style="margin-top:20px;max-width:700px"><div class="rowflex"><div class="avatar" style="width:70px;height:70px;font-size:28px">${esc(state.user.name[0])}</div><div><h2>${esc(state.user.name)}</h2><p class="muted">${esc(state.user.email||state.user.phone||"")}</p><span class="badge">${state.user.role}</span></div></div><hr style="border:0;border-top:1px solid var(--line);margin:22px 0"><p><b>X Coin:</b> ${money(state.user.balance)}</p><h3 style="margin-top:24px">Parolni o‘zgartirish</h3><div class="field"><label>Joriy parol</label><input id="curPw" type="password"></div><div class="field"><label>Yangi parol</label><input id="newPw" type="password"></div><button class="secondary" onclick="changePassword()">Saqlash</button><div style="margin-top:20px"><button class="danger" onclick="logout()">Chiqish</button></div></div>`)}
+async function renderProfile(){
+ setApp(`<div class="welcome"><div><h1>Profil</h1><p class="muted">Shaxsiy hisob ma’lumotlari.</p></div></div><div class="grid2" style="margin-top:20px;align-items:start"><div class="card"><div class="rowflex"><div class="avatar" style="width:70px;height:70px;font-size:28px">${esc(state.user.name[0])}</div><div><h2>${esc(state.user.name)}</h2><p class="muted">${esc(state.user.email||state.user.phone||"")}</p><span class="badge">${state.user.role}</span></div></div><hr style="border:0;border-top:1px solid var(--line);margin:22px 0"><p><b>X Coin:</b> ${money(state.user.balance)}</p><h3 style="margin-top:24px">Parolni o‘zgartirish</h3><div class="field"><label>Joriy parol</label><input id="curPw" type="password"></div><div class="field"><label>Yangi parol</label><input id="newPw" type="password"></div><button class="secondary" onclick="changePassword()">Saqlash</button><div style="margin-top:20px"><button class="danger" onclick="logout()">Chiqish</button></div></div><div class="card" style="text-align:center"><h3>Shaxsiy QR kod</h3><p class="muted" style="font-size:13px">Tadbirlarga qatnashuvni belgilash uchun shu QR kodni ko‘rsating.</p><div id="profileQr" style="margin-top:14px">Yuklanmoqda...</div></div></div>`);
+ try{const r=await api("/profile/qr");const el=document.getElementById("profileQr");if(el)el.innerHTML=`<img src="${r.qrImage}" style="width:200px;height:200px">`;}catch(e){const el=document.getElementById("profileQr");if(el)el.innerHTML=`<p class="muted">QR yuklanmadi</p>`;}
+}
 async function changePassword(){try{await api("/auth/password",{method:"POST",body:JSON.stringify({currentPassword:curPw.value,newPassword:newPw.value})});curPw.value="";newPw.value="";toast("Parol yangilandi")}catch(e){toast(e.message)}}
 
 // ---------- Admin ----------

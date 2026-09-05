@@ -4,12 +4,12 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
-const { getDB, mutate, id, save } = require("./db");
+const { getDB, mutate, id, save, saveUpload } = require("./db");
 const { hashPassword, verifyPassword, sign, auth, roles } = require("./auth");
 
 const apiRouter = express.Router();
 const upload = multer({
-  dest: path.join(__dirname, "..", "uploads", "products"),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_, file, cb) => {
     if (/^image\/(png|jpeg|webp|gif)$/.test(file.mimetype)) cb(null, true);
@@ -37,6 +37,13 @@ function publicUser(u, db) {
 function genPassword() {
   return crypto.randomBytes(9).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) || "Ax7bQ9kLmZ2";
 }
+function ensureQrToken(u) {
+  if (u.qrToken) return u.qrToken;
+  const token = crypto.randomBytes(16).toString("hex");
+  mutate(d => { d.users.find(x => x.id === u.id).qrToken = token; });
+  u.qrToken = token;
+  return token;
+}
 
 // First-run bootstrap: creates ONE super-admin account. No demo students, classes,
 // coins, or products. Everything else is created by the admin from the admin panel.
@@ -46,7 +53,7 @@ function seed() {
   const email = (process.env.ADMIN_EMAIL || "admin@maktabx.local").toLowerCase();
   const generated = !process.env.ADMIN_PASSWORD;
   const password = process.env.ADMIN_PASSWORD || genPassword();
-  const admin = { id:id("usr"), name: process.env.ADMIN_NAME || "Bosh administrator", email, phone: process.env.ADMIN_PHONE || null, role:"SUPER_ADMIN", passwordHash:null };
+  const admin = { id:id("usr"), name: process.env.ADMIN_NAME || "Bosh administrator", email, phone: process.env.ADMIN_PHONE || null, role:"SUPER_ADMIN", qrToken: crypto.randomBytes(16).toString("hex"), passwordHash:null };
   (async () => {
     admin.passwordHash = await hashPassword(password);
     db.users.push(admin);
@@ -71,6 +78,12 @@ apiRouter.post("/auth/login", async (req,res) => {
 });
 apiRouter.post("/auth/logout",(req,res)=>{res.clearCookie("maktabx_session");res.json({ok:true});});
 apiRouter.get("/auth/me",auth,(req,res)=>{const db=getDB();const u=currentUser(db,req);if(!u)return res.status(401).json({error:"Sessiya tugagan"});res.json({user:publicUser(u,db)});});
+apiRouter.get("/profile/qr",auth,async(req,res)=>{
+  const db=getDB(),u=currentUser(db,req);
+  const token=ensureQrToken(u);
+  const qrImage=await QRCode.toDataURL(token,{width:260,margin:1});
+  res.json({qrImage,token});
+});
 apiRouter.post("/auth/password",auth,async(req,res)=>{
   const db=getDB(),u=currentUser(db,req),{currentPassword,newPassword}=req.body;
   if(!(await verifyPassword(currentPassword||"",u.passwordHash)))return res.status(401).json({error:"Joriy parol noto‘g‘ri"});
@@ -169,10 +182,10 @@ apiRouter.patch("/purchases/:id",auth,roles("ADMIN","SUPER_ADMIN"),(req,res)=>{c
 // ---------- Canteen (Oshxona) QR coin-exchange flow ----------
 apiRouter.get("/canteen/items",auth,(req,res)=>{const db=getDB();res.json(db.canteenItems.filter(x=>x.active));});
 apiRouter.get("/admin/canteen/items",auth,roles("ADMIN","SUPER_ADMIN"),(req,res)=>res.json(getDB().canteenItems));
-apiRouter.post("/admin/canteen/items",auth,roles("ADMIN","SUPER_ADMIN"),upload.single("image"),(req,res)=>{
+apiRouter.post("/admin/canteen/items",auth,roles("ADMIN","SUPER_ADMIN"),upload.single("image"),async(req,res)=>{
   const it={id:id("cit"),name:req.body.name,description:req.body.description||"",price:Number(req.body.price||0),category:req.body.category||"Oshxona",active:req.body.active!=="false",image:""};
   if(!it.name||it.price<=0)return res.status(400).json({error:"Nomi va narxi to‘g‘ri kiritilsin"});
-  if(req.file){const ext=path.extname(req.file.originalname)||".webp";const dest=req.file.path+ext;fs.renameSync(req.file.path,dest);it.image="/uploads/products/"+path.basename(dest);}
+  if(req.file){try{it.image=await saveUpload(req.file,"canteen");}catch(e){return res.status(500).json({error:"Rasm yuklashda xatolik: "+e.message});}}
   mutate(d=>{d.canteenItems.push(it);audit(d,req.user.id,"CANTEEN_ITEM_CREATED",it.id,{name:it.name});});
   res.json(it);
 });
@@ -269,6 +282,17 @@ apiRouter.get("/achievements",auth,(req,res)=>{const db=getDB();res.json(db.achi
 apiRouter.get("/events",auth,(req,res)=>res.json(getDB().events));
 apiRouter.post("/events",auth,roles("ADMIN","SUPER_ADMIN"),(req,res)=>{const row={id:id("evt"),title:req.body.title,description:req.body.description||"",date:req.body.date||"",location:req.body.location||"Maktab",createdAt:now()};if(!row.title)return res.status(400).json({error:"Sarlavha kerak"});mutate(d=>d.events.push(row));res.json(row);});
 apiRouter.post("/events/:id/checkin",auth,roles("STUDENT"),(req,res)=>{const db=getDB();if(!db.events.some(e=>e.id===req.params.id))return res.status(404).json({error:"Event topilmadi"});if(db.eventAttendance.some(x=>x.eventId===req.params.id&&x.userId===req.user.id))return res.status(409).json({error:"Allaqachon qayd etilgan"});const row={id:id("ea"),eventId:req.params.id,userId:req.user.id,createdAt:now()};mutate(d=>d.eventAttendance.push(row));res.json(row);});
+apiRouter.post("/events/:id/checkin-scan",auth,roles("TEACHER","ADMIN","SUPER_ADMIN"),(req,res)=>{
+  const db=getDB(),ev=db.events.find(e=>e.id===req.params.id);
+  if(!ev)return res.status(404).json({error:"Event topilmadi"});
+  const token=String(req.body.token||"").trim();
+  const student=db.users.find(x=>x.qrToken===token);
+  if(!student)return res.status(404).json({error:"QR kod tanilmadi"});
+  if(db.eventAttendance.some(x=>x.eventId===ev.id&&x.userId===student.id))return res.status(409).json({error:`${student.name} allaqachon qayd etilgan`});
+  const row={id:id("ea"),eventId:ev.id,userId:student.id,createdAt:now(),scannedBy:req.user.id};
+  mutate(d=>{d.eventAttendance.push(row);audit(d,req.user.id,"EVENT_CHECKIN_SCAN",ev.id,{studentId:student.id});});
+  res.json({...row,studentName:student.name});
+});
 
 apiRouter.get("/announcements",auth,(req,res)=>res.json(getDB().announcements));
 apiRouter.post("/announcements",auth,roles("ADMIN","SUPER_ADMIN"),(req,res)=>{const row={id:id("ann"),title:req.body.title,body:req.body.body||"",audience:req.body.audience||"ALL",createdAt:now()};if(!row.title)return res.status(400).json({error:"Sarlavha kerak"});mutate(d=>d.announcements.unshift(row));res.json(row);});
@@ -288,10 +312,10 @@ apiRouter.get("/admin/overview",auth,roles("ADMIN","SUPER_ADMIN"),(req,res)=>{
   res.json({counts:{students:students.length,teachers:teachers.length,chefs:chefs.length,classes:db.classes.length,products:db.products.length,purchases:db.purchases.length,coinsEarned:db.coinTransactions.filter(x=>x.amount>0).reduce((s,x)=>s+x.amount,0),coinsSpent:-db.coinTransactions.filter(x=>x.amount<0).reduce((s,x)=>s+x.amount,0)},users:db.users.map(u=>publicUser(u,db)),purchases:db.purchases.slice().reverse(),auditLogs:db.auditLogs.slice(0,50)});
 });
 apiRouter.get("/admin/products",auth,roles("ADMIN","SUPER_ADMIN"),(req,res)=>res.json(getDB().products));
-apiRouter.post("/admin/products",auth,roles("ADMIN","SUPER_ADMIN"),upload.single("image"),(req,res)=>{
+apiRouter.post("/admin/products",auth,roles("ADMIN","SUPER_ADMIN"),upload.single("image"),async(req,res)=>{
   const p={id:id("prd"),name:req.body.name,description:req.body.description||"",price:Number(req.body.price||0),stock:Number(req.body.stock||0),category:req.body.category||"Boshqa",active:req.body.active!=="false",featured:req.body.featured==="true",image:""};
   if(!p.name||p.price<0||p.stock<0)return res.status(400).json({error:"Mahsulot ma’lumotlari noto‘g‘ri"});
-  if(req.file){const ext=path.extname(req.file.originalname)||".webp";const dest=req.file.path+ext;fs.renameSync(req.file.path,dest);p.image="/uploads/products/"+path.basename(dest);}
+  if(req.file){try{p.image=await saveUpload(req.file,"products");}catch(e){return res.status(500).json({error:"Rasm yuklashda xatolik: "+e.message});}}
   mutate(d=>{d.products.push(p);audit(d,req.user.id,"PRODUCT_CREATED",p.id,{name:p.name});});res.json(p);
 });
 apiRouter.patch("/admin/products/:id",auth,roles("ADMIN","SUPER_ADMIN"),(req,res)=>{
@@ -313,7 +337,7 @@ apiRouter.post("/admin/users",auth,roles("ADMIN","SUPER_ADMIN"),async(req,res)=>
   if(!email&&!phone)return res.status(400).json({error:"Email yoki telefon kerak"});
   if(email&&db.users.some(u=>u.email&&u.email.toLowerCase()===String(email).toLowerCase()))return res.status(409).json({error:"Email band"});
   if(phone&&db.users.some(u=>u.phone===phone))return res.status(409).json({error:"Telefon raqam band"});
-  const u={id:id("usr"),name,email:email||null,phone:phone||null,role,classId:classId||null,passwordHash:await hashPassword(password)};
+  const u={id:id("usr"),name,email:email||null,phone:phone||null,role,classId:classId||null,qrToken:crypto.randomBytes(16).toString("hex"),passwordHash:await hashPassword(password)};
   mutate(d=>{d.users.push(u);audit(d,req.user.id,"USER_CREATED",u.id,{role});});
   res.json(publicUser(u,db));
 });

@@ -6,9 +6,10 @@ const dbFile = path.join(dataDir, "db.json");
 
 const empty = {
   users: [], profiles: [], classes: [], subjects: [], grades: [], attendance: [],
-  homework: [], coinTransactions: [], rewardRules: [], products: [], purchases: [],
+  homework: [], homeworkSubmissions: [], coinTransactions: [], rewardRules: [], products: [], purchases: [],
   subscriptions: [], challenges: [], challengeProgress: [], achievements: [], userAchievements: [],
   events: [], eventAttendance: [], announcements: [], notifications: [], activitySessions: [],
+  timetable: [], canteenItems: [], canteenOrders: [],
   auditLogs: [], settings: { schoolName: "MAKTAB X", subtitle: "1 SCHOOL", coinName: "X Coin" }
 };
 

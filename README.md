@@ -3,35 +3,48 @@
 A full-stack school operating platform with student, teacher, parent and admin areas.
 
 ## Included
-- Secure login with hashed passwords + JWT sessions
-- Student / Teacher / Parent / Admin roles
-- Electronic diary and grades 1–10
+- Secure login with hashed passwords + JWT sessions (email or phone)
+- Student / Teacher / Parent / Admin / Oshpaz (canteen chef) roles
+- Electronic diary (real timetable) and grades 1–10
 - Attendance
-- Homework
+- Homework with student submission + reward
 - X Coin economy and transaction history
 - CoinShop, inventory and purchases
+- **Oshxona (canteen) QR coin-exchange**: student picks food, gets a one-time QR, the chef scans it (camera-based scanner, jsQR) or types the code, coins move from student to chef instantly; chef and admin get a coins-collected report (settlement/cash payout happens outside the app)
 - Challenges, leaderboard and achievements
 - Events and QR-ready attendance flow
-- Announcements and notifications
+- Announcements and notifications (with an in-app bell dropdown)
 - FREE / PRO / MAX subscription architecture
 - AI Assistant endpoint (provider-neutral; configure env vars)
 - Activity sessions with explicit user-started timer
-- Admin analytics, user management and audit log
+- Admin console: users, classes/subjects, timetable, CoinShop products, canteen items & report, audit log
 - Responsive white Apple-inspired EdTech UI
 - Original MAKTAB X visual asset slots
 
-## Run locally / Replit
+## Run locally / Render
 1. `npm install`
 2. Copy `.env.example` to `.env`
 3. Set a strong `JWT_SECRET`
 4. `npm start`
 5. Open port 3000
 
-Demo accounts are seeded automatically:
-- Admin: `admin@maktabx.local` / `Admin123!`
-- Teacher: `teacher@maktabx.local` / `Teacher123!`
-- Student: `student@maktabx.local` / `Student123!`
-- Parent: `parent@maktabx.local` / `Parent123!`
+## First run (no demo data)
+There is **no seeded demo data**. On first boot the server creates exactly one
+`SUPER_ADMIN` account and prints its password to the server console/logs
+**once**:
+- Email: `ADMIN_EMAIL` env var, or `admin@maktabx.local` by default
+- Password: `ADMIN_PASSWORD` env var if set, otherwise a random password is
+  generated and printed to the logs on first boot only — copy it from there
+  and change it immediately from Profile → "Parolni o'zgartirish".
+
+Everything else (classes, subjects, students, teachers, the canteen chef
+account, CoinShop products, canteen menu items) is created afterwards from
+the Admin panel.
+
+## Voice welcome greeting
+Drop an audio file at `public/assets/audio/welcome.mp3` and it will play
+automatically every time someone logs in (browser autoplay allows this
+because login is a user click). No file there yet = silently skipped.
 
 Change demo passwords before production.
 
